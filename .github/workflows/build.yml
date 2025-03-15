@@ -1,12 +1,8 @@
-name: Build
+name: Build FlClash With PPanel
 
 on:
   workflow_dispatch:
     inputs:
-      runs_on:
-        description: '指定运行的操作系统环境'
-        required: false
-        default: 'ubuntu-latest'
       username:
         description: 'GitHub用户名或组织名'
         required: true
@@ -25,10 +21,6 @@ on:
         description: '构建产物路径(多个路径用逗号分隔)'
         required: true
         default: 'dist'
-      compress_artifacts:
-        description: '是否压缩构建产物'
-        required: false
-        default: 'false'
       env_vars:
         description: '构建环境变量（已加密或格式：KEY1=VALUE1,KEY2=VALUE2）'
         required: false
@@ -36,105 +28,97 @@ on:
         description: '环境变量是否已加密'
         required: false
         default: 'false'
+      bun_version:
+        description: 'Bun版本'
+        required: false
+        default: 'latest'
 
 jobs:
   build:
-    runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
 
     steps:
     - name: 检出构建工具仓库
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
+    - name: 安装必要工具
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y expect
+    - name: 设置脚本权限
+      run: |
+        chmod +x .github/workflows/run_interactive_command.sh
     - name: 克隆目标项目
       run: |
         # 设置 Git 全局配置，避免身份验证问题
         git config --global user.name "GitHub Actions"
         git config --global user.email "actions@github.com"
-
         # 构建仓库URL
         REPO_URL="https://github.com/${{ github.event.inputs.username }}/${{ github.event.inputs.repo }}.git"
-
         # 添加认证令牌
         REPO_WITH_AUTH=$(echo "$REPO_URL" | sed -E "s#https://#https://${{ secrets.GH_TOKEN }}@#")
-
         # 克隆仓库
         echo "正在克隆仓库: ${{ github.event.inputs.username }}/${{ github.event.inputs.repo }} ..."
         git clone -q --recurse-submodules --branch ${{ github.event.inputs.branch }} "$REPO_WITH_AUTH" target-project
         # 立即清理包含令牌的环境变量
         unset REPO_WITH_AUTH
-
         cd target-project
         git checkout ${{ github.event.inputs.branch }}
-        mkdir dist
-
     - name: 安装Bun
       uses: oven-sh/setup-bun@v1
       with:
-        bun-version: latest
-
-    - name: 安装工作流依赖
-      run: |
-        echo "安装工作流所需的依赖包..."
-        # 安装运行脚本和解密环境变量所需的依赖
-        bun add crypto child_process
+        bun-version: ${{ github.event.inputs.bun_version }}
 
     - name: 设置普通环境变量
       if: ${{ github.event.inputs.encrypted == 'false' && github.event.inputs.env_vars != '' }}
       working-directory: target-project
       run: |
         echo "设置环境变量..."
-
         # 创建.env文件
         touch .env
-
         # 处理环境变量
         IFS=',' read -ra VARS <<< "${{ github.event.inputs.env_vars }}"
         for VAR in "${VARS[@]}"; do
           # 删除可能的前后空格
           VAR=$(echo "$VAR" | xargs)
-
           # 提取键名和值
           KEY=$(echo "$VAR" | cut -d= -f1)
           VALUE=$(echo "$VAR" | cut -d= -f2-)
-
           # 使用GitHub的mask功能来隐藏敏感值
           echo "::add-mask::$VALUE"
-
           # 同时写入GitHub环境变量和.env文件
           echo "$VAR" >> $GITHUB_ENV
           echo "$VAR" >> .env
-
           # 日志中只显示键名
           echo "设置环境变量: $KEY=********"
         done
-
         echo "环境变量已安全写入.env文件"
-
     - name: 解密并设置环境变量
       if: ${{ github.event.inputs.encrypted == 'true' && github.event.inputs.env_vars != '' }}
       working-directory: target-project
       run: |
         echo "解密环境变量..."
-
+        # 安装 crypto 包供解密脚本使用（保持在当前工作目录）
+        # 记住当前目录
+        CURRENT_DIR=$(pwd)
+        # 在主仓库安装依赖，但不切换工作目录
+        pushd $GITHUB_WORKSPACE > /dev/null
+        bun add crypto
+        popd > /dev/null
         # 创建环境变量文件
         ENV_FILE=".env"
         TEMP_ENV_FILE=$(mktemp)
-
         # 使用 Bun 直接执行 TypeScript 解密工具
         bun $GITHUB_WORKSPACE/.github/workflows/decrypt-env.ts "${{ github.event.inputs.env_vars }}" "${{ secrets.GH_TOKEN }}" "$TEMP_ENV_FILE"
-
         if [ $? -ne 0 ]; then
           echo "环境变量解密失败"
           exit 1
         fi
-
         # 将环境变量加载到当前步骤和项目的.env文件
         cat "$TEMP_ENV_FILE" >> $GITHUB_ENV
         cat "$TEMP_ENV_FILE" > "$ENV_FILE"
-
         echo "已成功解密和设置环境变量"
         rm "$TEMP_ENV_FILE"
-
     - name: Setup JAVA
       uses: actions/setup-java@v4
       with:
@@ -156,14 +140,12 @@ jobs:
         echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> android/local.properties
         echo "storePassword=${{ secrets.STORE_PASSWORD }}" >> android/local.properties
         echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> android/local.properties
-        
     - name: Setup Go
       uses: actions/setup-go@v5
       with:
         go-version: 'stable'
         cache-dependency-path: |
           target-project/core/go.sum
-          
     - name: Rename
       run: bash rename.sh
       working-directory: target-project
@@ -182,25 +164,19 @@ jobs:
     - name: Generate Freezed and JSON Serializable Files
       working-directory: target-project
       run: flutter pub run build_runner build --delete-conflicting-outputs
-
+      
     - name: 执行构建命令
       working-directory: target-project
       run: |
         echo "执行构建命令..."
-
-        # 获取当前工作目录的绝对路径
-        CURRENT_DIR=$(pwd)
-
         # 将分号分隔的构建命令拆分为数组并逐个执行
         IFS=';' read -ra COMMANDS <<< "${{ github.event.inputs.build_command }}"
         for cmd in "${COMMANDS[@]}"; do
           # 移除命令两端的空格
           cmd=$(echo "$cmd" | xargs)
-
           echo "执行: $cmd"
-          # 使用 TypeScript 脚本处理可能的交互命令，传递工作目录参数
-          cd $CURRENT_DIR && bun $GITHUB_WORKSPACE/.github/workflows/run_interactive_command.ts "$cmd" "$CURRENT_DIR"
-
+          # 使用脚本处理可能的交互命令
+          $GITHUB_WORKSPACE/.github/workflows/run_interactive_command.sh "$cmd"
           # 检查上一个命令的退出状态
           if [ $? -ne 0 ]; then
             echo "命令执行失败: $cmd"
@@ -208,7 +184,6 @@ jobs:
           fi
         done
         echo "所有构建命令已成功执行"
-
     - name: 打包构建产物为ZIP
       working-directory: target-project
       run: |
@@ -244,10 +219,24 @@ jobs:
 
     - name: 构建完成通知
       run: |
-        echo "您可以在GitHub Actions运行页面的'Artifacts'部分下载构建产物"
+        echo "项目构建已完成"
         echo "构建产物路径: ${{ github.event.inputs.artifact_paths }}"
-        if [[ "${{ github.event.inputs.compress_artifacts }}" == "true" ]]; then
-          echo "构建产物已压缩为ZIP文件"
-        else
-          echo "构建产物以原始目录结构上传"
-        fi
+        echo "构建产物已打包为: ${{ env.ZIP_FILE }}"
+        echo "您可以在GitHub Actions运行页面的'Artifacts'部分下载构建产物"
+        echo "或者使用以下命令通过GitHub CLI下载："
+        echo "gh run download <workflow-run-id> -n Android"
+        echo "或者使用以下API下载："
+        echo "curl -L \\"
+        echo "  -H \"Accept: application/vnd.github+json\" \\"
+        echo "  -H \"Authorization: Bearer <YOUR-TOKEN>\" \\"
+        echo "  -H \"X-GitHub-Api-Version: 2022-11-28\" \\"
+        echo "  https://api.github.com/repos/${{ github.repository }}/actions/artifacts/<artifact-id>/zip \\"
+        echo "  -o Android.zip"
+    - name: 清理Actions运行记录
+      if: env.CLEAN_HISTORY == 'true'
+      uses: Mattraks/delete-workflow-runs@v2
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        repository: ${{ github.repository }}
+        retain_days: 1
+        keep_minimum_runs: 1
