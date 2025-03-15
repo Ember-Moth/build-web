@@ -12,7 +12,7 @@ on:
       branch:
         description: '要检出的分支'
         required: true
-        default: 'main'
+        default: 'Alpha'
       build_command:
         description: '构建命令（可包含多条命令，用分号分隔）'
         required: true
@@ -21,13 +21,6 @@ on:
         description: '构建产物路径(多个路径用逗号分隔)'
         required: true
         default: 'dist'
-      env_vars:
-        description: '构建环境变量（已加密或格式：KEY1=VALUE1,KEY2=VALUE2）'
-        required: false
-      encrypted:
-        description: '环境变量是否已加密'
-        required: false
-        default: 'false'
       bun_version:
         description: 'Bun版本'
         required: false
@@ -107,23 +100,8 @@ jobs:
       
     - name: 执行构建命令
       working-directory: target-project
-      run: |
-        echo "执行构建命令..."
-        # 将分号分隔的构建命令拆分为数组并逐个执行
-        IFS=';' read -ra COMMANDS <<< "${{ github.event.inputs.build_command }}"
-        for cmd in "${COMMANDS[@]}"; do
-          # 移除命令两端的空格
-          cmd=$(echo "$cmd" | xargs)
-          echo "执行: $cmd"
-          # 使用脚本处理可能的交互命令
-          $GITHUB_WORKSPACE/.github/workflows/run_interactive_command.sh "$cmd"
-          # 检查上一个命令的退出状态
-          if [ $? -ne 0 ]; then
-            echo "命令执行失败: $cmd"
-            exit 1
-          fi
-        done
-        echo "所有构建命令已成功执行"
+      run: dart setup.dart android
+      
     - name: 打包构建产物为ZIP
       working-directory: target-project
       run: |
