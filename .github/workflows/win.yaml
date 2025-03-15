@@ -1,0 +1,82 @@
+name: Build FlClash With PPanel
+
+on:
+  workflow_dispatch:
+    inputs:
+      username:
+        description: 'GitHub用户名或组织名'
+        required: true
+      repo:
+        description: '仓库名称'
+        required: true
+      branch:
+        description: '要检出的分支'
+        required: true
+        default: 'Alpha'
+      build_command:
+        description: '构建命令（可包含多条命令，用分号分隔）'
+        required: true
+        default: 'dart setup.dart windows --arch amd64'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 检出构建工具仓库
+      uses: actions/checkout@v4
+
+    - name: 克隆目标项目
+      run: |
+        # 设置 Git 全局配置，避免身份验证问题
+        git config --global user.name "GitHub Actions"
+        git config --global user.email "actions@github.com"
+        # 构建仓库URL
+        REPO_URL="https://github.com/${{ github.event.inputs.username }}/${{ github.event.inputs.repo }}.git"
+        # 添加认证令牌
+        REPO_WITH_AUTH=$(echo "$REPO_URL" | sed -E "s#https://#https://${{ secrets.GH_TOKEN }}@#")
+        # 克隆仓库
+        echo "正在克隆仓库: ${{ github.event.inputs.username }}/${{ github.event.inputs.repo }} ..."
+        git clone -q --recurse-submodules --branch ${{ github.event.inputs.branch }} "$REPO_WITH_AUTH" target-project
+        # 立即清理包含令牌的环境变量
+        unset REPO_WITH_AUTH
+        cd target-project
+        git checkout ${{ github.event.inputs.branch }}
+
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: 'stable'
+        cache-dependency-path: |
+          target-project/core/go.sum
+          
+    - name: Rename
+      run: bash rename.sh
+      working-directory: target-project
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: 3.24.5
+        channel: stable
+        cache: true
+        
+    - name: Get Flutter Dependency
+      working-directory: target-project
+      run: flutter pub get
+
+    - name: Generate Freezed and JSON Serializable Files
+      working-directory: target-project
+      run: flutter pub run build_runner build --delete-conflicting-outputs
+      
+    - name: 执行构建命令
+      working-directory: target-project
+      run: dart setup.dart windows --arch amd64
+      
+
+    - name: Upload
+      uses: actions/upload-artifact@v4
+      with:
+        name: artifact-${{ matrix.platform }}${{ matrix.arch && format('-{0}', matrix.arch) }}
+        path: target-project/dist
+        overwrite: true
