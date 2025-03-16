@@ -144,6 +144,9 @@ jobs:
     - name: 变量替换
       working-directory: target-project
       run: bun rename.ts
+    - name: 图标替换
+      working-directory: target-project
+      run: bun app_ico.ts
 
     - name: Setup JAVA
       if: ${{ contains(github.event.inputs.build_command, 'android') }}
