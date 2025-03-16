@@ -1,4 +1,4 @@
-name: Build
+name: Build FlClash With PPanel
 
 on:
   workflow_dispatch:
