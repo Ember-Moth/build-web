@@ -46,6 +46,7 @@ jobs:
       uses: actions/checkout@v3
 
     - name: 克隆目标项目
+      shell: bash
       run: |
         # 设置 Git 全局配置，避免身份验证问题
         git config --global user.name "GitHub Actions"
@@ -193,6 +194,7 @@ jobs:
       run: flutter pub run build_runner build --delete-conflicting-outputs
 
     - name: 执行构建命令
+      shell: bash
       working-directory: target-project
       run: |
         echo "执行构建命令..."
@@ -226,6 +228,7 @@ jobs:
         overwrite: true
 
     - name: 构建完成通知
+      shell: bash
       run: |
         echo "您可以在GitHub Actions运行页面的'Artifacts'部分下载构建产物"
         echo "构建产物路径: ${{ github.event.inputs.artifact_paths }}"
