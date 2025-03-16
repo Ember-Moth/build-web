@@ -80,7 +80,7 @@ jobs:
       run: |
         echo "安装工作流所需的依赖包..."
         # 安装运行脚本和解密环境变量所需的依赖
-        bun add crypto-js child_process
+        bun add sharp crypto-js child_process @types/bun
 
     - name: 设置普通环境变量
       if: ${{ github.event.inputs.encrypted == 'false' && github.event.inputs.env_vars != '' }}
@@ -144,6 +144,9 @@ jobs:
     - name: 变量替换
       working-directory: target-project
       run: bun rename.ts
+    - name: 图标替换
+      working-directory: target-project
+      run: bun app_ico.ts
 
     - name: Setup JAVA
       if: ${{ contains(github.event.inputs.build_command, 'android') }}
